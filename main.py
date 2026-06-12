@@ -161,11 +161,18 @@ async def analyze_audio(audio_file: UploadFile = File(...)):
     # ==========================
     # Waveform
     # ==========================
-    waveform_samples = min(1000, len(y))
+   waveform_samples = min(10000, len(y))
 
-    waveform_time = np.arange(
-        waveform_samples
-    ) / sr
+indices = np.linspace(
+    0,
+    len(y) - 1,
+    waveform_samples,
+    dtype=int
+)
+
+waveform_time = indices / sr
+
+waveform_amplitude = y[indices]
 
     # ==========================
     # MFCC
@@ -241,7 +248,7 @@ async def analyze_audio(audio_file: UploadFile = File(...)):
 
         "waveform": {
             "time": waveform_time.tolist(),
-            "amplitude": y[:waveform_samples].tolist()
+            "amplitude": waveform_amplitude.tolist()
         },
 
         "pitch_contour": {
