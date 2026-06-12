@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import librosa
 import tempfile
 import parselmouth
@@ -6,8 +7,15 @@ import numpy as np
 
 app = FastAPI()
 
-latest_data = {}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+latest_data = {}
 
 @app.get("/")
 def home():
