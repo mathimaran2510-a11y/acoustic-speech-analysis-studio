@@ -164,10 +164,10 @@ async def analyze_audio(audio_file: UploadFile = File(...)):
     waveform_samples = min(10000, len(y))
 
     indices = np.linspace(
-    0,
-    len(y) - 1,
-    waveform_samples,
-    dtype=int
+        0,
+        len(y) - 1,
+        waveform_samples,
+        dtype=int
     )
 
     waveform_time = indices / sr
