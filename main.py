@@ -1,0 +1,311 @@
+from fastapi import FastAPI, UploadFile, File, HTTPException
+import librosa
+import tempfile
+import parselmouth
+import numpy as np
+
+app = FastAPI()
+
+latest_data = {}
+
+
+@app.get("/")
+def home():
+    return {
+        "message": "Acoustic Speech Analysis API Running"
+    }
+
+
+@app.post("/analyze")
+async def analyze_audio(audio_file: UploadFile = File(...)):
+
+    global latest_data
+
+    # ==========================
+    # Save uploaded WAV file
+    # ==========================
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+        temp_audio.write(await audio_file.read())
+        temp_path = temp_audio.name
+
+    # ==========================
+    # Load Audio
+    # ==========================
+    y, sr = librosa.load(temp_path, sr=None)
+
+    duration = len(y) / sr
+
+    # ==========================
+    # Praat Sound Object
+    # ==========================
+    sound = parselmouth.Sound(temp_path)
+
+    # ==========================
+    # Voice Quality
+    # ==========================
+    point_process = parselmouth.praat.call(
+        sound,
+        "To PointProcess (periodic, cc)",
+        75,
+        500
+    )
+
+    jitter_local = parselmouth.praat.call(
+        point_process,
+        "Get jitter (local)",
+        0,
+        0,
+        0.0001,
+        0.02,
+        1.3
+    )
+
+    shimmer_local = parselmouth.praat.call(
+        [sound, point_process],
+        "Get shimmer (local)",
+        0,
+        0,
+        0.0001,
+        0.02,
+        1.3,
+        1.6
+    )
+
+    harmonicity = parselmouth.praat.call(
+        sound,
+        "To Harmonicity (cc)",
+        0.01,
+        75,
+        0.1,
+        1.0
+    )
+
+    mean_hnr = parselmouth.praat.call(
+        harmonicity,
+        "Get mean",
+        0,
+        0
+    )
+
+    # ==========================
+    # Pitch Analysis
+    # ==========================
+    pitch = sound.to_pitch()
+
+    frequencies = pitch.selected_array["frequency"]
+
+    voiced = frequencies[frequencies > 0]
+
+    if len(voiced) > 0:
+        mean_pitch = float(np.mean(voiced))
+        min_pitch = float(np.min(voiced))
+        max_pitch = float(np.max(voiced))
+    else:
+        mean_pitch = 0
+        min_pitch = 0
+        max_pitch = 0
+
+    pitch_times = pitch.xs()
+
+    pitch_values = [
+        None if x == 0 else float(x)
+        for x in frequencies
+    ]
+
+    # ==========================
+    # Formants
+    # ==========================
+    formant = sound.to_formant_burg()
+
+    duration_sound = sound.get_total_duration()
+
+    formant_times = np.arange(
+        0.05,
+        duration_sound,
+        0.05
+    )
+
+    f1 = []
+    f2 = []
+    f3 = []
+
+    for t in formant_times:
+
+        f1_value = formant.get_value_at_time(1, t)
+        f2_value = formant.get_value_at_time(2, t)
+        f3_value = formant.get_value_at_time(3, t)
+
+        f1.append(
+            None if np.isnan(f1_value)
+            else float(f1_value)
+        )
+
+        f2.append(
+            None if np.isnan(f2_value)
+            else float(f2_value)
+        )
+
+        f3.append(
+            None if np.isnan(f3_value)
+            else float(f3_value)
+        )
+
+    # ==========================
+    # Waveform
+    # ==========================
+    waveform_samples = min(1000, len(y))
+
+    waveform_time = np.arange(
+        waveform_samples
+    ) / sr
+
+    # ==========================
+    # MFCC
+    # ==========================
+    mfcc = librosa.feature.mfcc(
+        y=y,
+        sr=sr,
+        n_mfcc=13
+    )
+
+    # ==========================
+    # Spectrogram
+    # ==========================
+    spectrogram = np.abs(
+        librosa.stft(y)
+    )
+
+    spectrogram_db = librosa.amplitude_to_db(
+        spectrogram,
+        ref=np.max
+    )
+
+    # ==========================
+    # Audio Statistics
+    # ==========================
+    rms = librosa.feature.rms(y=y)
+
+    zcr = librosa.feature.zero_crossing_rate(y)
+
+    spectral_centroid = librosa.feature.spectral_centroid(
+        y=y,
+        sr=sr
+    )
+
+    # ==========================
+    # Store Data
+    # ==========================
+    latest_data = {
+
+        "audio_info": {
+            "sample_rate": sr,
+            "duration_seconds": round(duration, 2),
+            "total_samples": len(y)
+        },
+
+        "pitch_statistics": {
+            "mean_pitch_hz": round(mean_pitch, 2),
+            "min_pitch_hz": round(min_pitch, 2),
+            "max_pitch_hz": round(max_pitch, 2)
+        },
+
+        "audio_statistics": {
+            "mean_rms_energy":
+                float(np.mean(rms)),
+
+            "mean_zero_crossing_rate":
+                float(np.mean(zcr)),
+
+            "mean_spectral_centroid":
+                float(np.mean(spectral_centroid))
+        },
+
+        "voice_quality": {
+            "jitter_local_percent":
+                round(float(jitter_local * 100), 4),
+
+            "shimmer_local_percent":
+                round(float(shimmer_local * 100), 4),
+
+            "harmonic_to_noise_ratio_db":
+                round(float(mean_hnr), 2)
+        },
+
+        "waveform": {
+            "time": waveform_time.tolist(),
+            "amplitude": y[:waveform_samples].tolist()
+        },
+
+        "pitch_contour": {
+            "time": pitch_times.tolist(),
+            "frequency": pitch_values
+        },
+
+        "formants": {
+            "time": formant_times.tolist(),
+            "F1": f1,
+            "F2": f2,
+            "F3": f3
+        },
+
+        "mfcc": {
+            "coefficients": mfcc.tolist()
+        },
+
+        "spectrogram": {
+            "data": spectrogram_db[:64, :50].tolist()
+        }
+    }
+
+    return {
+        "status": "Analysis Complete",
+        "audio_info": latest_data["audio_info"],
+        "pitch_statistics": latest_data["pitch_statistics"],
+        "audio_statistics": latest_data["audio_statistics"],
+        "voice_quality": latest_data["voice_quality"]
+    }
+
+
+@app.get("/waveform")
+def get_waveform():
+    if not latest_data:
+        raise HTTPException(status_code=404, detail="No analysis available")
+    return latest_data["waveform"]
+
+
+@app.get("/pitch")
+def get_pitch():
+    if not latest_data:
+        raise HTTPException(status_code=404, detail="No analysis available")
+    return {
+        "pitch_statistics": latest_data["pitch_statistics"],
+        "pitch_contour": latest_data["pitch_contour"]
+    }
+
+
+@app.get("/formants")
+def get_formants():
+    if not latest_data:
+        raise HTTPException(status_code=404, detail="No analysis available")
+    return latest_data["formants"]
+
+
+@app.get("/mfcc")
+def get_mfcc():
+    if not latest_data:
+        raise HTTPException(status_code=404, detail="No analysis available")
+    return latest_data["mfcc"]
+
+
+@app.get("/spectrogram")
+def get_spectrogram():
+    if not latest_data:
+        raise HTTPException(status_code=404, detail="No analysis available")
+    return latest_data["spectrogram"]
+
+
+@app.get("/voice_quality")
+def get_voice_quality():
+    if not latest_data:
+        raise HTTPException(status_code=404, detail="No analysis available")
+    return latest_data["voice_quality"]
