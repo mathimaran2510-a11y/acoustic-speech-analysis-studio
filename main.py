@@ -206,11 +206,109 @@ async def analyze_audio(audio_file: UploadFile = File(...)):
         y=y,
         sr=sr
     )
+    # ==========================
+    # Stress Analysis
+    # ==========================
 
+    # Pitch Score
+    if mean_pitch < 160:
+        pitch_score = 0
+    elif mean_pitch < 180:
+        pitch_score = 25
+    elif mean_pitch < 200:
+        pitch_score = 50
+    elif mean_pitch < 220:
+        pitch_score = 75
+    else:
+        pitch_score = 100
+
+    # Jitter Score
+    jitter_percent = float(jitter_local * 100)
+
+    if jitter_percent < 1:
+        jitter_score = 0
+    elif jitter_percent < 1.5:
+        jitter_score = 25
+    elif jitter_percent < 2:
+        jitter_score = 50
+    elif jitter_percent < 3:
+        jitter_score = 75
+    else:
+        jitter_score = 100
+
+    # Shimmer Score
+    shimmer_percent = float(shimmer_local * 100)
+
+    if shimmer_percent < 5:
+        shimmer_score = 0
+    elif shimmer_percent < 8:
+        shimmer_score = 25
+    elif shimmer_percent < 10:
+        shimmer_score = 50
+    elif shimmer_percent < 15:
+        shimmer_score = 75
+    else:
+        shimmer_score = 100
+
+    # HNR Score
+    if mean_hnr > 20:
+        hnr_score = 0
+    elif mean_hnr > 15:
+        hnr_score = 25
+    elif mean_hnr > 10:
+        hnr_score = 50
+    elif mean_hnr > 5:
+        hnr_score = 75
+    else:
+        hnr_score = 100
+
+    # Spectral Centroid Score
+    centroid = float(np.mean(spectral_centroid))
+
+    if centroid < 3000:
+        centroid_score = 0
+    elif centroid < 4000:
+        centroid_score = 25
+    elif centroid < 5000:
+        centroid_score = 50
+    elif centroid < 6000:
+        centroid_score = 75
+    else:
+        centroid_score = 100
+
+    # Final Weighted Stress Score
+    stress_score = round(
+        pitch_score * 0.25 +
+        jitter_score * 0.20 +
+        shimmer_score * 0.20 +
+        hnr_score * 0.20 +
+        centroid_score * 0.15,
+        2
+    )
+
+    if stress_score < 20:
+        stress_level = "Relaxed"
+    elif stress_score < 40:
+        stress_level = "Mild Stress"
+    elif stress_score < 60:
+        stress_level = "Moderate Stress"
+    elif stress_score < 80:
+         stress_level = "High Stress"
+    else:
+        stress_level = "Severe Stress"
     # ==========================
     # Store Data
     # ==========================
     latest_data = {
+        "stress_analysis": {
+            "stress_score": stress_score,
+            "stress_level": stress_level,
+            "pitch_score": pitch_score,
+            "jitter_score": jitter_score,
+            "shimmer_score": shimmer_score,
+            "hnr_score": hnr_score,
+            "centroid_score": centroid_score
+        },
 
         "audio_info": {
             "sample_rate": sr,
@@ -277,7 +375,8 @@ async def analyze_audio(audio_file: UploadFile = File(...)):
         "audio_info": latest_data["audio_info"],
         "pitch_statistics": latest_data["pitch_statistics"],
         "audio_statistics": latest_data["audio_statistics"],
-        "voice_quality": latest_data["voice_quality"]
+        "voice_quality": latest_data["voice_quality"],
+        "stress_analysis": latest_data["stress_analysis"]
     }
 
 
@@ -324,3 +423,13 @@ def get_voice_quality():
     if not latest_data:
         raise HTTPException(status_code=404, detail="No analysis available")
     return latest_data["voice_quality"]
+
+
+@app.get("/stress_analysis")
+def get_stress_analysis():
+    if not latest_data:
+        raise HTTPException(
+            status_code=404,
+            detail="No analysis available"
+        )
+    return latest_data["stress_analysis"]
